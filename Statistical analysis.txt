@@ -1,0 +1,455 @@
+# Importing necessary libraries
+import pandas as pd
+import scipy.stats as stats
+import numpy as np
+import matplotlib.pyplot as plt
+import statsmodels.api as sm
+import statsmodels.formula.api as smf
+from scipy.stats import shapiro, spearmanr, pearsonr
+from matplotlib.lines import Line2D
+from scipy.stats import ttest_ind
+from statsmodels.formula.api import mixedlm
+import seaborn as sns
+import os
+
+# Define custom Y axis labels for each blood type
+y_axis_labels = {
+    "WBC": "WBC (count/μL)",
+    "LYM": "LYM (count/μL)",
+    "GRA": "GRA (count/μL)",
+    "MON": "MON (count/μL)",
+    "MCHC": "MCHC (pg/cell)",
+    "RDW": "RDW% (%)",
+    "RDWa": "RDWa (fL)",
+    "HGB": "HGB (g/dL)",
+    "RBC": "RBC (x10⁶/µL)",
+    "MCV": "MCV (fL)",
+    "PLT": "PLT (x10³/µL)",
+    "MPV": "MPV (fL)"
+}
+
+x_axis_labels = {
+    "Glucose": "Glucose (mg/dL)"
+    }
+
+# Loading the dataset
+file_path = "/workspaces/Statistical-analysis-of-EAE-MS-model/master data - master data.csv"
+df = pd.read_csv(file_path, encoding='UTF-8-SIG')
+df.columns = df.columns.str.strip()
+df['Group'] = df['Group'].str.strip()
+
+# List of blood types to cycle through
+bloodtypes = [
+    "WBC", "LYM", "MON", "GRA", "HGB", "MCH", "MCHC", "RBC",
+    "MCV", "HCT", "RDW", "RDWa", "PLT", "MPV"
+]
+
+def choose_corr(x, y):
+    # Remove NaNs
+    mask = x.notna() & y.notna()
+    xvals = x[mask]
+    yvals = y[mask]
+    if len(xvals) < 3 or len(yvals) < 3:
+        return np.nan, np.nan, "Not enough data"
+    px = shapiro(xvals)[1] if len(xvals) < 5000 else stats.normaltest(xvals)[1]
+    py = shapiro(yvals)[1] if len(yvals) < 5000 else stats.normaltest(yvals)[1]
+    if px > 0.05 and py > 0.05:
+        corr, pval = pearsonr(xvals, yvals)
+        method = "Pearson"
+    else:
+        corr, pval = spearmanr(xvals, yvals)
+        method = "Spearman"
+    return corr, pval, method
+
+colors = {'NT': 'green', 'HICT': 'red'}
+
+# Prepare to collect results
+results = []
+
+# --- PRIMARY ANALYSIS (all terms) ---
+
+for bloodtype in bloodtypes:
+    y_col = f"{bloodtype}Value"
+    if y_col not in df.columns:
+        print(f"Column {y_col} not found, skipping.")
+        continue
+
+    # Ensure numeric columns for analysis
+    df["Glucose"] = pd.to_numeric(df["Glucose"], errors="coerce")
+    df[y_col] = pd.to_numeric(df[y_col], errors="coerce")
+
+    # Get the custom Y axis label, or default to y_col
+    y_label = y_axis_labels.get(bloodtype, y_col)
+
+    print(f"\n=== {bloodtype} vs Glucose ===")
+
+    # 1. All data
+    x = df["Glucose"]
+    y = df[y_col]
+    mask = x.notna() & y.notna()
+    corr_all, pval_all, method_all = choose_corr(x, y)
+    star = " *" if pval_all < 0.05 else ""
+    plt.figure(figsize=(12, 8))  # Double the default size
+    plt.scatter(x[mask], y[mask], alpha=0.6)
+    if mask.sum() > 1:
+        # Regression line and 95% CI error band
+        X = sm.add_constant(x[mask])
+        model = sm.OLS(y[mask], X).fit()
+        pred = model.get_prediction(X)
+        pred_ci = pred.conf_int(alpha=0.05)
+        mean_pred = pred.predicted_mean
+        sort_idx = np.argsort(x[mask])
+        plt.plot(x[mask].values[sort_idx], mean_pred[sort_idx], color='black', linestyle='--', label='Fit')
+        plt.fill_between(
+            x[mask].values[sort_idx],
+            pred_ci[sort_idx, 0],
+            pred_ci[sort_idx, 1],
+            color='gray', alpha=0.3, label='95% CI'
+        )
+    plt.xlabel(x_axis_labels.get(x.name, x.name), fontsize=16)
+    plt.ylabel(y_label, fontsize=16)
+    plt.legend(fontsize=16)
+    plt.tight_layout()
+    plt.savefig(f"{bloodtype}_all_scatter.png")
+    plt.close()
+
+    # 2. By group
+    group_corrs = {}
+    plt.figure(figsize=(12, 8))
+    for group in df['Group'].dropna().unique():
+        group_df = df[df['Group'] == group]
+        xg = group_df["Glucose"]
+        yg = group_df[y_col]
+        corr, pval, method = choose_corr(xg, yg)
+        n = (xg.notna() & yg.notna()).sum()
+        min_val = yg.min(skipna=True)
+        max_val = yg.max(skipna=True)
+        star = " *" if pval < 0.05 else ""
+        if not np.isnan(corr):
+            group_corrs[group] = (corr, pval, method, n)
+            print(f"{group}: {method} r={corr:.3f}, p={pval:.3g}{star} (n={n}) | min={min_val}, max={max_val}")
+            results.append({
+                "Bloodtype": bloodtype,
+                "Comparison": group,
+                "Method": method,
+                "r": corr,
+                "p": pval,
+                "Significant": pval < 0.05,
+                "N": n,
+                "Min": min_val,
+                "Max": max_val
+            })
+            plt.scatter(xg, yg, alpha=0.6, label=f"{group} (r={corr:.2f}, p={pval:.3g}{star}, n={n}, min={min_val}, max={max_val})", color=colors.get(group, None))
+            maskg = xg.notna() & yg.notna()
+            if maskg.sum() > 1:
+                Xg = sm.add_constant(xg[maskg])
+                modelg = sm.OLS(yg[maskg], Xg).fit()
+                predg = modelg.get_prediction(Xg)
+                predg_ci = predg.conf_int(alpha=0.05)
+                mean_predg = predg.predicted_mean
+                sort_idxg = np.argsort(xg[maskg])
+                plt.plot(xg[maskg].values[sort_idxg], mean_predg[sort_idxg], color=colors.get(group, None), linestyle='--', label=f"{group} trend (min={min_val}, max={max_val})")
+                plt.fill_between(
+                    xg[maskg].values[sort_idxg],
+                    predg_ci[sort_idxg, 0],
+                    predg_ci[sort_idxg, 1],
+                    color=colors.get(group, None), alpha=0.2
+                )
+        else:
+            print(f"{group}: Not enough data (n={n}) | min={min_val}, max={max_val}")
+    plt.xlabel(x_axis_labels.get(x.name, x.name), fontsize=16)
+    plt.ylabel(y_label, fontsize=16)
+    plt.legend(fontsize=16)
+    plt.tight_layout()
+    plt.savefig(f"{bloodtype}_bygroup_scatter.png")
+    plt.close()
+
+    # 3. Fisher z-test
+    if len(group_corrs) == 2:
+        def fisher_z(r): return 0.5 * np.log((1 + r) / (1 - r))
+        (r1, _, _, n1), (r2, _, _, n2) = group_corrs.values()
+        z1, z2 = fisher_z(r1), fisher_z(r2)
+        z = (z1 - z2) / np.sqrt(1/(n1-3) + 1/(n2-3)) # Fisher's z transformation Z = z1 - z2 / sqrt(1/n1-3 + 1/n2-3)
+        p = 2 * (1 - stats.norm.cdf(abs(z)))
+        star = " *" if p < 0.05 else ""
+        print(f"Fisher z-test between groups: z={z:.3f}, p={p:.3g}{star}")
+        results.append({
+            "Bloodtype": bloodtype,
+            "Comparison": "Fisher z-test",
+            "Method": "Fisher z",
+            "r": z,
+            "p": p,
+            "Significant": p < 0.05
+        })
+    else:
+        print("Not enough groups for Fisher z-test.")
+
+    # 4. Regression with interaction (visualize)
+    df2 = df.copy()
+    df2 = df2[df2["Glucose"].notna() & df2[y_col].notna()]
+    df2['Group'] = df2['Group'].astype('category')
+    if not df2.empty and len(df2['Group'].cat.categories) > 1:
+        model = smf.ols(f'{y_col} ~ Glucose * Group', data=df2).fit()
+        print(model.summary())
+        interaction_p = model.pvalues.get('Glucose:Group[T.HICT]', np.nan)
+        star = " *" if interaction_p < 0.05 else ""
+        results.append({
+            "Bloodtype": bloodtype,
+            "Comparison": "Regression Interaction",
+            "Method": "OLS",
+            "r": np.nan,
+            "p": interaction_p,
+            "Significant": interaction_p < 0.05
+        })
+        plt.figure(figsize=(12, 8))
+        intercepts = {}
+        slopes = {}
+        for group in df2['Group'].cat.categories:
+            sub = df2[df2['Group'] == group]
+            plt.scatter(sub["Glucose"], sub[y_col], alpha=0.6, label=group, color=colors.get(group, None))
+            if len(sub) > 1:
+                Xsub = sm.add_constant(sub["Glucose"])
+                model_sub = sm.OLS(sub[y_col], Xsub).fit()
+                pred_sub = model_sub.get_prediction(Xsub)
+                pred_sub_ci = pred_sub.conf_int(alpha=0.05)
+                mean_pred_sub = pred_sub.predicted_mean
+                sort_idx_sub = np.argsort(sub["Glucose"])
+                plt.plot(sub["Glucose"].values[sort_idx_sub], mean_pred_sub[sort_idx_sub], color=colors.get(group, None), linestyle='-')
+                plt.fill_between(
+                    sub["Glucose"].values[sort_idx_sub],
+                    pred_sub_ci[sort_idx_sub, 0],
+                    pred_sub_ci[sort_idx_sub, 1],
+                    color=colors.get(group, None), alpha=0.2
+                )
+                m, b = np.polyfit(sub["Glucose"], sub[y_col], 1)
+                slopes[group] = m
+                intercepts[group] = b
+        # If there are exactly two groups, check for intersection
+        if len(slopes) == 2:
+            groups = list(slopes.keys())
+            m1, b1 = slopes[groups[0]], intercepts[groups[0]]
+            m2, b2 = slopes[groups[1]], intercepts[groups[1]]
+            if m1 != m2:
+                x_intersect = (b2 - b1) / (m1 - m2)
+                x_min = max(df2[df2['Group'] == groups[0]]['Glucose'].min(), df2[df2['Group'] == groups[1]]['Glucose'].min())
+                x_max = min(df2[df2['Group'] == groups[0]]['Glucose'].max(), df2[df2['Group'] == groups[1]]['Glucose'].max())
+                if x_min <= x_intersect <= x_max:
+                    y_intersect = m1 * x_intersect + b1
+                    plt.scatter([x_intersect], [y_intersect], color='purple', marker='x', s=150,
+                                label=f'Intercept Point ({x_intersect:.2f}, {y_intersect:.2f})')
+                    print(f"Regression lines for {groups[0]} and {groups[1]} intersect at Glucose={x_intersect:.3f}, {y_label}={y_intersect:.3f}")
+                else:
+                    print(f"Regression lines for {groups[0]} and {groups[1]} do not intersect within the observed Glucose range.")
+        plt.xlabel(x_axis_labels.get(x.name, x.name), fontsize=16)
+        plt.ylabel(y_label, fontsize=16)
+        plt.legend(fontsize=16)
+        plt.tight_layout()
+        plt.savefig(f"{bloodtype}_regression_interaction.png")
+        plt.close()
+    else:
+        print("Not enough data for regression interaction plot.")
+
+    # 5. Likelihood ratio test between nested models
+    df['Group'] = df['Group'].astype('category')
+    df_lrt = df[df['Glucose'].notna() & df[y_col].notna() & df['Group'].notna()]
+    model1 = smf.ols(f"{y_col} ~ Glucose", data=df_lrt).fit()
+    model2 = smf.ols(f"{y_col} ~ Glucose + Group", data=df_lrt).fit()
+    lr_stat = 2 * (model2.llf - model1.llf)
+    df_diff = model2.df_model - model1.df_model
+    p_value = stats.chi2.sf(lr_stat, df_diff)
+    star = " *" if p_value < 0.05 else ""
+    print(f"Likelihood ratio test between nested models: LR stat={lr_stat:.3f}, p={p_value:.3g}{star}")
+    results.append({
+        "Bloodtype": bloodtype,
+        "Comparison": "Likelihood Ratio Test",
+        "Method": "LRT",
+        "r": np.nan,
+        "p": p_value,
+        "Significant": p_value < 0.05
+    })
+
+    # Regression with interaction term
+    df_combined = df[['Glucose', y_col, 'Group']].copy()
+    df_combined = df_combined[df_combined['Glucose'].notna() & df_combined[y_col].notna() & df_combined['Group'].notna()]
+    df_combined = df_combined.rename(columns={'Glucose': 'X', y_col: 'Y'})
+    df_combined['Group'] = df_combined['Group'].astype('category').cat.codes  # 0/1 coding
+
+    # Fit the interaction model
+    model = smf.ols('Y ~ X + Group + X:Group', data=df_combined).fit()
+    print(model.summary())
+
+    # Get the p-value for the interaction term
+    interaction_p = model.pvalues.get('X:Group', None)
+    slopes_significant = interaction_p is not None and interaction_p < 0.05
+
+    # Save OLS interaction result to results for CSV
+    results.append({
+        "Bloodtype": bloodtype,
+        "Comparison": "OLS Interaction",
+        "Method": "OLS",
+        "r": np.nan,
+        "p": interaction_p,
+        "Significant": slopes_significant
+    })
+
+# Save all results to a CSV file
+results_df = pd.DataFrame(results)
+results_df.to_csv("glucose_bloodtype_stats_results.csv", index=False)
+print("\nAll statistical results saved to glucose_bloodtype_stats_results.csv")
+
+# --- Secondary Analysis: Glucose, EAE Score, and Weight % over Time ---
+
+# Load data
+file2 = r"C:\Users\wande\Downloads\master data - master data.csv"
+df = pd.read_csv(file2)
+df.columns = df.columns.str.strip()
+
+# Replace spaces with underscores in all column names
+df = df.rename(columns=lambda x: x.replace(' ', '_'))
+
+# Ensure numeric
+for col in [
+    'Glucose', 'EAE_score', 'Weight_%', 'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue',
+    'MCHCValue', 'RBCValue', 'MCVValue', 'HCTValue', 'RDWValue', 'RDWaValue', 'PLTValue', 'MPVValue'
+]:
+    if col in df.columns:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+
+# Only keep rows with Group in colors
+colors = {'HICT': 'red', 'NT': 'green'}
+df = df[df['Group'].isin(colors.keys())]
+
+# Get all unique terms for full x-axis
+all_terms = sorted(df['Term'].dropna().unique())
+
+fig, ax1 = plt.subplots(figsize=(10, 6))
+
+for group in df['Group'].unique():
+    group_df = df[df['Group'] == group].groupby('Term').mean(numeric_only=True).sort_index()
+    group_df = group_df.reindex(all_terms)
+    glucose_interp = group_df['Glucose'].interpolate()
+    weight_interp = group_df['Weight_%'].interpolate()
+    eae_interp = group_df['EAE_score'].interpolate()
+
+    mask = (glucose_interp.index >= 2) & (glucose_interp.index <= 8)
+    ax1.plot(glucose_interp.index[mask], glucose_interp[mask], color='black', linewidth=0.5, linestyle=':', zorder=1)
+    ax1.plot(weight_interp.index[mask], weight_interp[mask], color='black', linewidth=0.5, linestyle=':', zorder=1)
+
+    ax1.plot(group_df.index, group_df['Glucose'], marker='o', color=colors[group], label=f'{group} Glucose', zorder=2)
+    ax1.plot(group_df.index, group_df['Weight_%'], marker='s', color=colors[group], linestyle='--', label=f'{group} Weight %', zorder=2)
+
+ax1.set_xlabel("Term (Time)", fontsize=14)
+ax1.set_ylabel("Glucose (mg/dL), Weight (%)", fontsize=14)
+
+# EAE Score (right y-axis)
+ax2 = ax1.twinx()
+for group in df['Group'].unique():
+    group_df = df[df['Group'] == group].groupby('Term').mean(numeric_only=True).sort_index()
+    group_df = group_df.reindex(all_terms)
+    eae_interp = group_df['EAE_score'].interpolate()
+    mask = (eae_interp.index >= 2) & (eae_interp.index <= 8)
+    ax2.plot(eae_interp.index[mask], eae_interp[mask], color='black', linewidth=0.5, linestyle=':', zorder=1)
+    ax2.plot(group_df.index, group_df['EAE_score'], marker='^', color=colors[group], linestyle=':', label=f'{group} EAE Score', zorder=2)
+
+ax2.set_ylabel("EAE Score", fontsize=14)
+ax2.set_ylim(0, 4)
+
+# Custom legend for black dotted line
+custom_lines = [
+    Line2D([0], [0], color='black', lw=1, linestyle=':', label='n/a (interpolated)')
+]
+
+# Combine legends
+lines1, labels1 = ax1.get_legend_handles_labels()
+lines2, labels2 = ax2.get_legend_handles_labels()
+all_lines = lines1 + lines2 + custom_lines
+all_labels = labels1 + labels2 + ['n/a (interpolated)']
+ax1.legend(all_lines, all_labels, fontsize=10, loc='upper left')
+
+plt.title("Glucose, EAE Score, and Weight % vs Time (with dotted interpolated line, days 2-8)", fontsize=15)
+plt.tight_layout()
+plt.savefig("summary_plot.png", dpi=300)
+plt.close()
+
+# --- Statistical analysis: t-test for glucose at each term ---
+print("Statistical analysis of Glucose between groups at each Term:")
+for term in all_terms:
+    hict_vals = df[(df['Group'] == 'HICT') & (df['Term'] == term)]['Glucose'].dropna()
+    nt_vals = df[(df['Group'] == 'NT') & (df['Term'] == term)]['Glucose'].dropna()
+    if len(hict_vals) > 1 and len(nt_vals) > 1:
+        stat, pval = ttest_ind(hict_vals, nt_vals, equal_var=False)
+        print(f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})")
+    else:
+        print(f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})")
+
+# --- LMM Analysis and Visuals ---
+blood_cols = [
+    'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue', 'MCHCValue',
+    'RBCValue', 'MCVValue', 'HCTValue', 'RDWValue', 'RDWaValue', 'PLTValue', 'MPVValue',
+    'Glucose', 'EAE_score'
+]
+id_col = 'ID' if 'ID' in df.columns else df.columns[-1]
+
+# Output directory for LMM plots and results
+os.makedirs("lmm_plots", exist_ok=True)
+lmm_results = []
+
+for var in blood_cols:
+    if var not in df.columns:
+        continue
+    print(f"\nLMM for {var}:")
+    lmm_df = df[['Term', 'Group', id_col, var]].dropna()
+    if lmm_df[var].nunique() < 2 or lmm_df['Group'].nunique() < 2:
+        print("  Not enough data for LMM.")
+        continue
+    try:
+        model = mixedlm(f"{var} ~ Term + Group", lmm_df, groups=lmm_df[id_col])
+        result = model.fit(method='nm', maxiter=200)
+        print(result.summary())
+        lmm_results.append(f"LMM for {var}:\n{result.summary()}\n")
+    except Exception as e:
+        print(f"  LMM failed: {e}")
+        lmm_results.append(f"LMM for {var}:\nLMM failed: {e}\n")
+        continue
+
+    # Visualize: individual mice over time, colored by group (full size)
+    plt.figure(figsize=(16, 8))
+    for group in lmm_df['Group'].unique():
+        group_color = colors.get(group, 'gray')
+        for mouse in lmm_df[lmm_df['Group'] == group][id_col].unique():
+            mouse_data = lmm_df[(lmm_df['Group'] == group) & (lmm_df[id_col] == mouse)]
+            plt.plot(mouse_data['Term'], mouse_data[var], color=group_color, alpha=0.5, linewidth=2)
+    plt.title(f"{var} over Time by Mouse and Group")
+    plt.xlabel("Term (Time)")
+    plt.ylabel(var)
+    legend_lines = [Line2D([0], [0], color='red', lw=2, label='HICT'),
+                    Line2D([0], [0], color='green', lw=2, label='NT')]
+    plt.legend(handles=legend_lines)
+    plt.tight_layout()
+    plt.savefig(f"lmm_plots/{var}_individual_mice.png", dpi=300)
+    plt.close()
+
+    # Visualize: group means with error bars (full size)
+    plt.figure(figsize=(16, 8))
+    sns.lineplot(
+        data=lmm_df,
+        x='Term',
+        y=var,
+        hue='Group',
+        palette=colors,
+        errorbar='sd',
+        marker='o'
+    )
+    plt.title(f"{var} Group Means over Time")
+    plt.xlabel("Term (Time)")
+    plt.ylabel(var)
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(f"lmm_plots/{var}_group_means.png", dpi=300)
+    plt.close()
+
+# Save LMM results to a text file
+with open("lmm_plots/lmm_results.txt", "w") as f:
+    for res in lmm_results:
+        f.write(res)
+        f.write("\n" + "="*80 + "\n")
