@@ -309,7 +309,7 @@ df = df.rename(columns=lambda x: x.replace(' ', '_'))
 
 # Ensure numeric
 for col in [
-    'Glucose', 'EAE_score', 'Weight_%', 'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue',
+    'Glucose', 'EAE_score', 'Weight_Pct', 'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue',
     'MCHCValue', 'RBCValue', 'MCVValue', 'HCTValue', 'RDWValue', 'RDWaValue', 'PLTValue', 'MPVValue'
 ]:
     if col in df.columns:
@@ -328,7 +328,7 @@ for group in df['Group'].unique():
     group_df = df[df['Group'] == group].groupby('Term').mean(numeric_only=True).sort_index()
     group_df = group_df.reindex(all_terms)
     glucose_interp = group_df['Glucose'].interpolate()
-    weight_interp = group_df['Weight_%'].interpolate()
+    weight_interp = group_df['Weight_Pct'].interpolate()
     eae_interp = group_df['EAE_score'].interpolate()
 
     mask = (glucose_interp.index >= 2) & (glucose_interp.index <= 8)
@@ -336,7 +336,7 @@ for group in df['Group'].unique():
     ax1.plot(weight_interp.index[mask], weight_interp[mask], color='black', linewidth=0.5, linestyle=':', zorder=1)
 
     ax1.plot(group_df.index, group_df['Glucose'], marker='o', color=colors[group], label=f'{group} Glucose', zorder=2)
-    ax1.plot(group_df.index, group_df['Weight_%'], marker='s', color=colors[group], linestyle='--', label=f'{group} Weight %', zorder=2)
+    ax1.plot(group_df.index, group_df['Weight_Pct'], marker='s', color=colors[group], linestyle='--', label=f'{group} Weight %', zorder=2)
 
 ax1.set_xlabel("Term (Time)", fontsize=14)
 ax1.set_ylabel("Glucose (mg/dL), Weight (%)", fontsize=14)
