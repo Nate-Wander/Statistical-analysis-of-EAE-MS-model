@@ -51,7 +51,7 @@ x_axis_labels = {
     }
 
 # Loading the dataset
-file_path = "Downloads\\master data - master data.csv" #add file location
+file_path = #add file path
 df = pd.read_csv(file_path, encoding='UTF-8-SIG')
 df.columns = df.columns.str.strip()
 df['Group'] = df['Group'].str.strip()
@@ -356,7 +356,7 @@ for group in df['Group'].unique():
     ax1.plot(group_df.index, group_df['Glucose'], marker='o', color=colors[group], label=f'{group} Glucose', zorder=2)
     ax1.plot(group_df.index, group_df['Weight_Pct'], marker='s', color=colors[group], linestyle='--', label=f'{group} Weight %', zorder=2)
 
-ax1.set_xlabel("Term (Time)", fontsize=14)
+ax1.set_xlabel("Time (Days)", fontsize=14)
 ax1.set_ylabel("Glucose (mg/dL), Weight (%)", fontsize=14)
 
 # EAE Score (right y-axis)
