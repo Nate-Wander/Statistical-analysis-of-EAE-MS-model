@@ -11,7 +11,27 @@ from scipy.stats import ttest_ind
 from statsmodels.formula.api import mixedlm
 import seaborn as sns
 import os
-import re
+# --- Power Analysis for Two Groups (n=9 and n=10) ---
+from statsmodels.stats.power import TTestIndPower
+
+# Parameters for power analysis
+sample_size_group1 = 9
+sample_size_group2 = 10
+effect_size = 0.8  # Cohen's d, adjust as needed
+alpha = 0.05       # Significance level
+
+analysis = TTestIndPower()
+power = analysis.power(effect_size=effect_size,
+                       nobs1=sample_size_group1,
+                       ratio=sample_size_group2/sample_size_group1,
+                       alpha=alpha,
+                       alternative='two-sided')
+print(f"Power analysis for two-sample t-test:")
+print(f"Group 1 sample size: {sample_size_group1}")
+print(f"Group 2 sample size: {sample_size_group2}")
+print(f"Effect size (Cohen's d): {effect_size}")
+print(f"Alpha: {alpha}")
+print(f"Estimated power: {power:.3f}")
 
 # Define custom Y axis labels for each blood type
 y_axis_labels = {
@@ -26,24 +46,7 @@ y_axis_labels = {
     "RBC": "RBC (x10⁶/µL)",
     "MCV": "MCV (fL)",
     "PLT": "PLT (x10³/µL)",
-    "MPV": "MPV (fL)",
-    'WBCValue': 'WBC (count/μL)',
-    'LYMValue': 'LYM (count/μL)',
-    'MONValue': 'MON (count/μL)',
-    'GRAValue': 'GRA (count/μL)',
-    'HGBValue': 'HGB (g/dL)',
-    'MCHValue': 'MCH (pg/cell)',
-    'MCHCValue': 'MCHC (pg/cell)',
-    'RBCValue': 'RBC (x10⁶/µL)',
-    'MCVValue': 'MCV (fL)',
-    'HCTValue': 'HCT (%)',
-    'RDWValue': 'RDW (%)',
-    'RDWaValue': 'RDWa (fL)',
-    'PLTValue': 'PLT (x10³/µL)',
-    'MPVValue': 'MPV (fL)',
-    'Glucose': 'Glucose (mg/dL)',
-    'EAE_score': 'EAE Score',
-    'Weight_Pct': 'Weight (%)'
+    "MPV": "MPV (fL)"
 }
 
 x_axis_labels = {
@@ -51,7 +54,7 @@ x_axis_labels = {
     }
 
 # Loading the dataset
-file_path = #add file path
+file_path = "[add file path]"
 df = pd.read_csv(file_path, encoding='UTF-8-SIG')
 df.columns = df.columns.str.strip()
 df['Group'] = df['Group'].str.strip()
@@ -325,9 +328,12 @@ df.columns = df.columns.str.strip()
 # Replace spaces with underscores in all column names
 df = df.rename(columns=lambda x: x.replace(' ', '_'))
 
+# Fix column name for weight percentage after renaming
+weight_col = 'Weight_Pct' if 'Weight_Pct' in df.columns else 'Weight_%'
+
 # Ensure numeric
 for col in [
-    'Glucose', 'EAE_score', 'Weight_Pct', 'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue',
+    'Glucose', 'EAE_score', 'Weight_%', 'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue',
     'MCHCValue', 'RBCValue', 'MCVValue', 'HCTValue', 'RDWValue', 'RDWaValue', 'PLTValue', 'MPVValue'
 ]:
     if col in df.columns:
@@ -346,17 +352,17 @@ for group in df['Group'].unique():
     group_df = df[df['Group'] == group].groupby('Term').mean(numeric_only=True).sort_index()
     group_df = group_df.reindex(all_terms)
     glucose_interp = group_df['Glucose'].interpolate()
-    weight_interp = group_df['Weight_Pct'].interpolate()
+    weight_interp = group_df[weight_col].interpolate()
     eae_interp = group_df['EAE_score'].interpolate()
 
-    mask = (glucose_interp.index >= 2) & (glucose_interp.index <= 22)
-    ax1.plot(glucose_interp.index[mask], glucose_interp[mask], color='black', linewidth=1, linestyle='-', zorder=1)
+    mask = (glucose_interp.index >= 2) & (glucose_interp.index <= 8)
+    ax1.plot(glucose_interp.index[mask], glucose_interp[mask], color='black', linewidth=0.5, linestyle=':', zorder=1)
     ax1.plot(weight_interp.index[mask], weight_interp[mask], color='black', linewidth=0.5, linestyle=':', zorder=1)
 
     ax1.plot(group_df.index, group_df['Glucose'], marker='o', color=colors[group], label=f'{group} Glucose', zorder=2)
-    ax1.plot(group_df.index, group_df['Weight_Pct'], marker='s', color=colors[group], linestyle='--', label=f'{group} Weight %', zorder=2)
+    ax1.plot(group_df.index, group_df[weight_col], marker='s', color=colors[group], linestyle='--', label=f'{group} Weight %', zorder=2)
 
-ax1.set_xlabel("Time (Days)", fontsize=14)
+ax1.set_xlabel("Term (Time)", fontsize=14)
 ax1.set_ylabel("Glucose (mg/dL), Weight (%)", fontsize=14)
 
 # EAE Score (right y-axis)
@@ -384,75 +390,33 @@ all_lines = lines1 + lines2 + custom_lines
 all_labels = labels1 + labels2 + ['n/a (interpolated)']
 ax1.legend(all_lines, all_labels, fontsize=10, loc='upper left')
 
+plt.title("Glucose, EAE Score, and Weight % vs Time (with dotted interpolated line, days 2-8)", fontsize=15)
 plt.tight_layout()
 plt.savefig("summary_plot.png", dpi=300)
 plt.close()
 
 # --- Statistical analysis: t-test for glucose at each term ---
 print("Statistical analysis of Glucose between groups at each Term:")
-ttest_results = []
 for term in all_terms:
     hict_vals = df[(df['Group'] == 'HICT') & (df['Term'] == term)]['Glucose'].dropna()
     nt_vals = df[(df['Group'] == 'NT') & (df['Term'] == term)]['Glucose'].dropna()
     if len(hict_vals) > 1 and len(nt_vals) > 1:
         stat, pval = ttest_ind(hict_vals, nt_vals, equal_var=False)
-        result_str = f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})"
-        print(result_str)
-        ttest_results.append(f"Glucose - {result_str}")
+        print(f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})")
     else:
-        result_str = f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})"
-        print(result_str)
-        ttest_results.append(f"Glucose - {result_str}")
-
-# --- Statistical analysis: t-test for EAE score at each term ---
-print("\nStatistical analysis of EAE score between groups at each Term:")
-for term in all_terms:
-    hict_vals = df[(df['Group'] == 'HICT') & (df['Term'] == term)]['EAE_score'].dropna()
-    nt_vals = df[(df['Group'] == 'NT') & (df['Term'] == term)]['EAE_score'].dropna()
-    if len(hict_vals) > 1 and len(nt_vals) > 1:
-        stat, pval = ttest_ind(hict_vals, nt_vals, equal_var=False)
-        result_str = f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})"
-        print(result_str)
-        ttest_results.append(f"EAE_score - {result_str}")
-    else:
-        result_str = f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})"
-        print(result_str)
-        ttest_results.append(f"EAE_score - {result_str}")
-
-# --- Statistical analysis: t-test for Weight_Pct at each term ---
-print("\nStatistical analysis of Weight_Pct between groups at each Term:")
-for term in all_terms:
-    hict_vals = df[(df['Group'] == 'HICT') & (df['Term'] == term)]['Weight_Pct'].dropna()
-    nt_vals = df[(df['Group'] == 'NT') & (df['Term'] == term)]['Weight_Pct'].dropna()
-    if len(hict_vals) > 1 and len(nt_vals) > 1:
-        stat, pval = ttest_ind(hict_vals, nt_vals, equal_var=False)
-        result_str = f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})"
-        print(result_str)
-        ttest_results.append(f"Weight_Pct - {result_str}")
-    else:
-        result_str = f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})"
-        print(result_str)
-        ttest_results.append(f"Weight_Pct - {result_str}")
-
-# --- Save t-test results to a text file ---
-with open("lmm_plots/ttest_results.txt", "w") as f:
-    for res in ttest_results:
-        f.write(res + "\n")
+        print(f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})")
 
 # --- LMM Analysis and Visuals ---
 blood_cols = [
     'WBCValue', 'LYMValue', 'MONValue', 'GRAValue', 'HGBValue', 'MCHValue', 'MCHCValue',
     'RBCValue', 'MCVValue', 'HCTValue', 'RDWValue', 'RDWaValue', 'PLTValue', 'MPVValue',
-    'Glucose', 'EAE_score', 'Weight_Pct'
+    'Glucose', 'EAE_score'
 ]
 id_col = 'ID' if 'ID' in df.columns else df.columns[-1]
 
 # Output directory for LMM plots and results
 os.makedirs("lmm_plots", exist_ok=True)
 lmm_results = []
-
-def sanitize_filename(name):
-    return re.sub(r'[\\/:"*?<>|]+', "_", name)
 
 for var in blood_cols:
     if var not in df.columns:
@@ -479,14 +443,14 @@ for var in blood_cols:
         for mouse in lmm_df[lmm_df['Group'] == group][id_col].unique():
             mouse_data = lmm_df[(lmm_df['Group'] == group) & (lmm_df[id_col] == mouse)]
             plt.plot(mouse_data['Term'], mouse_data[var], color=group_color, alpha=0.5, linewidth=2)
-    plt.xlabel("Time (Days)", fontsize=16)
-    plt.ylabel(var, fontsize=16)
+    plt.title(f"{var} over Time by Mouse and Group")
+    plt.xlabel("Term (Time)")
+    plt.ylabel(var)
     legend_lines = [Line2D([0], [0], color='red', lw=2, label='HICT'),
                     Line2D([0], [0], color='green', lw=2, label='NT')]
     plt.legend(handles=legend_lines)
     plt.tight_layout()
-    safe_var = sanitize_filename(var)
-    plt.savefig(f"lmm_plots/{safe_var}_individual_mice.png", dpi=300)
+    plt.savefig(f"lmm_plots/{var}_individual_mice.png", dpi=300)
     plt.close()
 
     # Visualize: group means with error bars (full size)
@@ -500,11 +464,12 @@ for var in blood_cols:
         errorbar='sd',
         marker='o'
     )
-    plt.ylabel(y_axis_labels.get(var, var.replace('_', ' ')), fontsize=16)
-    plt.legend(fontsize=16)
+    plt.title(f"{var} Group Means over Time")
+    plt.xlabel("Term (Time)")
+    plt.ylabel(var)
     plt.legend()
     plt.tight_layout()
-    plt.savefig(f"lmm_plots/{safe_var}_group_means.png", dpi=300)
+    plt.savefig(f"lmm_plots/{var}_group_means.png", dpi=300)
     plt.close()
 
 # Save LMM results to a text file
