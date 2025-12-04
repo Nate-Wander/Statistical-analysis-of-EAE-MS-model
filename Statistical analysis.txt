@@ -396,15 +396,37 @@ plt.savefig("summary_plot.png", dpi=300)
 plt.close()
 
 # --- Statistical analysis: t-test for glucose at each term ---
-print("Statistical analysis of Glucose between groups at each Term:")
+# --- Save t-test results for glucose at each term to a txt file ---
+t_test_results = []
+t_test_results.append("Statistical analysis of Glucose between groups at each Term:\n")
 for term in all_terms:
     hict_vals = df[(df['Group'] == 'HICT') & (df['Term'] == term)]['Glucose'].dropna()
     nt_vals = df[(df['Group'] == 'NT') & (df['Term'] == term)]['Glucose'].dropna()
     if len(hict_vals) > 1 and len(nt_vals) > 1:
         stat, pval = ttest_ind(hict_vals, nt_vals, equal_var=False)
-        print(f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})")
+        t_test_results.append(f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})\n")
     else:
-        print(f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})")
+        t_test_results.append(f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})\n")
+
+with open("glucose_ttest_by_term.txt", "w") as f:
+    f.writelines(t_test_results)
+print("Glucose t-test results by term saved to glucose_ttest_by_term.txt")
+
+# --- Save t-test results for Weight % at each term to a txt file ---
+weightpct_ttest_results = []
+weightpct_ttest_results.append("Statistical analysis of Weight % between groups at each Term:\n")
+for term in all_terms:
+    hict_vals = df[(df['Group'] == 'HICT') & (df['Term'] == term)][weight_col].dropna()
+    nt_vals = df[(df['Group'] == 'NT') & (df['Term'] == term)][weight_col].dropna()
+    if len(hict_vals) > 1 and len(nt_vals) > 1:
+        stat, pval = ttest_ind(hict_vals, nt_vals, equal_var=False)
+        weightpct_ttest_results.append(f"Term {term}: t={stat:.2f}, p={pval:.4f} (HICT n={len(hict_vals)}, NT n={len(nt_vals)})\n")
+    else:
+        weightpct_ttest_results.append(f"Term {term}: Not enough data for t-test (HICT n={len(hict_vals)}, NT n={len(nt_vals)})\n")
+
+with open("weightpct_ttest_by_term.txt", "w") as f:
+    f.writelines(weightpct_ttest_results)
+print("Weight % t-test results by term saved to weightpct_ttest_by_term.txt")
 
 # --- LMM Analysis and Visuals ---
 blood_cols = [
